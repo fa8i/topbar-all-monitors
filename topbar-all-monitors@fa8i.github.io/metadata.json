@@ -1,0 +1,10 @@
+{
+  "uuid": "topbar-all-monitors@fa8i.github.io",
+  "name": "Top Bar All Monitors",
+  "description": "Add a functional GNOME top bar to secondary monitors.",
+  "shell-version": [
+    "50"
+  ],
+  "url": "https://github.com/fa8i/topbar-all-monitors",
+  "version": 1
+}
