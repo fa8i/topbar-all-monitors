@@ -5,5 +5,8 @@
   "shell-version": [
     "50"
   ],
-  "url": "https://github.com/fa8i/topbar-all-monitors"
+  "url": "https://github.com/fa8i/topbar-all-monitors",
+  "donations": {
+    "buymeacoffee": "fa8i"
+  }
 }
