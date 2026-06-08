@@ -19,9 +19,6 @@ class SecondaryPanel extends Panel.Panel {
         Main.layoutManager.panelBox.remove_child(this);
         panelBox.add_child(this);
 
-        this.connect('destroy', () => {
-            Main.ctrlAltTabManager.removeGroup(this);
-        });
     }
 
     vfunc_get_preferred_width(_forHeight) {
@@ -31,6 +28,12 @@ class SecondaryPanel extends Panel.Panel {
             return [0, monitor.width];
 
         return [0, 0];
+    }
+
+    destroy() {
+        Main.ctrlAltTabManager.removeGroup(this);
+
+        super.destroy();
     }
 
     _getDraggableWindowForPosition(stageX) {
@@ -97,17 +100,17 @@ class SecondaryPanelBox {
 export default class TopBarAllMonitorsExtension extends Extension {
     enable() {
         this._panels = [];
-        this._monitorsChangedId = Main.layoutManager.connect(
+        Main.layoutManager.connectObject(
             'monitors-changed',
-            () => this._rebuildPanels()
+            () => this._rebuildPanels(),
+            this
         );
 
         this._rebuildPanels();
     }
 
     disable() {
-        Main.layoutManager.disconnect(this._monitorsChangedId);
-        this._monitorsChangedId = 0;
+        Main.layoutManager.disconnectObject(this);
 
         this._destroyPanels();
     }
