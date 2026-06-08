@@ -1,8 +1,3 @@
-.topbar-all-monitors-panel {
+.topbar-all-monitors-panel-box {
     spacing: 0px;
-}
-
-.topbar-all-monitors-panel .panel-button {
-    -minimum-hpadding: 8px;
-    -natural-hpadding: 12px;
 }
