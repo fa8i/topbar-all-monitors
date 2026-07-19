@@ -7,7 +7,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
 
-const PANEL_BOX_NAME = 'topbarAllMonitorsPanelBox';
+const PANEL_BOX_NAME = 'panelBox';
 
 const SecondaryPanel = GObject.registerClass(
 class SecondaryPanel extends Panel.Panel {
@@ -19,6 +19,17 @@ class SecondaryPanel extends Panel.Panel {
         Main.layoutManager.panelBox.remove_child(this);
         panelBox.add_child(this);
 
+        Main.panel.connectObject(
+            'notify::style-class',
+            () => this._syncStyleClass(),
+            this
+        );
+
+        this._syncStyleClass();
+    }
+
+    _syncStyleClass() {
+        this.set_style_class_name(Main.panel.get_style_class_name());
     }
 
     vfunc_get_preferred_width(_forHeight) {
@@ -31,6 +42,7 @@ class SecondaryPanel extends Panel.Panel {
     }
 
     destroy() {
+        Main.panel.disconnectObject(this);
         Main.ctrlAltTabManager.removeGroup(this);
 
         super.destroy();
