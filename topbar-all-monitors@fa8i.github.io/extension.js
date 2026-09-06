@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
 import St from 'gi://St';
@@ -35,10 +36,7 @@ class SecondaryPanel extends Panel.Panel {
     vfunc_get_preferred_width(_forHeight) {
         const monitor = Main.layoutManager.monitors[this._monitorIndex];
 
-        if (monitor)
-            return [0, monitor.width];
-
-        return [0, 0];
+        return [0, monitor?.width ?? 0];
     }
 
     destroy() {
@@ -75,31 +73,67 @@ class SecondaryPanel extends Panel.Panel {
 class SecondaryPanelBox {
     constructor(monitorIndex, monitor) {
         this.monitorIndex = monitorIndex;
+        this._publishIdleId = 0;
 
         this.actor = new St.BoxLayout({
-            name: PANEL_BOX_NAME,
+            name: 'topbarAllMonitorsPanelBox',
             style_class: 'topbar-all-monitors-panel-box',
             orientation: Clutter.Orientation.VERTICAL,
             clip_to_allocation: true,
             reactive: true,
+            x: monitor.x,
+            y: monitor.y,
+            width: monitor.width,
         });
 
-        Main.layoutManager.addChrome(this.actor, {
+        this.panel = new SecondaryPanel(monitorIndex, this.actor);
+        this.panel.connectObject(
+            'notify::allocation',
+            () => this._queuePublishPanel(),
+            this.actor
+        );
+
+        Main.layoutManager.addChrome(this.actor);
+    }
+
+    _queuePublishPanel() {
+        if (this._publishIdleId)
+            return;
+
+        // Wait for allocation and the previous panel's strut removal.
+        this._publishIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._publishIdleId = 0;
+            this._publishPanel();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _publishPanel() {
+        if (!this.actor.has_allocation() || !this.panel.has_allocation())
+            return;
+
+        const monitor = Main.layoutManager.findMonitorForActor(this.panel);
+        if (monitor?.index !== this.monitorIndex)
+            return;
+
+        // Allow styling extensions to discover the panel once its geometry is valid.
+        this.panel.disconnectObject(this.actor);
+        this.actor.set_name(PANEL_BOX_NAME);
+
+        // Trigger work-area discovery after publishing the panel.
+        Main.layoutManager.untrackChrome(this.actor);
+        Main.layoutManager.trackChrome(this.actor, {
             affectsStruts: true,
             trackFullscreen: true,
         });
-
-        this.update(monitor);
-
-        this.panel = new SecondaryPanel(monitorIndex, this.actor);
-    }
-
-    update(monitor) {
-        this.actor.set_position(monitor.x, monitor.y);
-        this.actor.set_size(monitor.width, -1);
     }
 
     destroy() {
+        if (this._publishIdleId) {
+            GLib.Source.remove(this._publishIdleId);
+            this._publishIdleId = 0;
+        }
+
         this.panel.destroy();
         this.panel = null;
 
@@ -113,6 +147,8 @@ export default class TopBarAllMonitorsExtension extends Extension {
     enable() {
         this._panels = [];
         Main.layoutManager.connectObject(
+            'startup-complete',
+            () => this._rebuildPanels(),
             'monitors-changed',
             () => this._rebuildPanels(),
             this
@@ -129,6 +165,10 @@ export default class TopBarAllMonitorsExtension extends Extension {
 
     _rebuildPanels() {
         this._destroyPanels();
+
+        // The startup animation temporarily transforms monitor coordinates.
+        if (Main.layoutManager._startingUp)
+            return;
 
         const primaryIndex = Main.layoutManager.primaryIndex;
 

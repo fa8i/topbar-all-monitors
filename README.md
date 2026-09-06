@@ -17,6 +17,9 @@ top bar to every secondary monitor.
 - Styling synchronized with the main GNOME Shell panel.
 - Improved compatibility with themes and panel styling extensions.
 
+Secondary panels are created after GNOME Shell finishes its startup animation,
+so styling extensions can identify their monitors using stable coordinates.
+
 ## Compatibility
 
 - GNOME Shell 50
@@ -56,6 +59,17 @@ gnome-extensions enable topbar-all-monitors@fa8i.github.io
 ```
 
 The generated ZIP will be available in `dist/`.
+
+## Tests
+
+Run the lifecycle regression tests with Node.js:
+
+```bash
+node --test tests/startup.test.mjs
+```
+
+The tests use a simulated Shell with synthetic monitor data. They are not
+included in the extension ZIP. Check visual effects separately in GNOME Shell.
 
 ## Support
 
