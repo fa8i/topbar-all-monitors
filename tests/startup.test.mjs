@@ -64,7 +64,9 @@ function createShell(startingUp) {
         ],
         panelBox: new Actor(),
         chrome: new Set(),
-        addChrome(actor) {
+        chromeParams: new Map(),
+        struts: new Set(),
+        addChrome(actor, params = {}) {
             // A styling extension can discover an actor as soon as it is added.
             assert.equal(actor.children.length, 1, 'publish a fully assembled panel');
             const [panel] = actor.children;
@@ -74,14 +76,19 @@ function createShell(startingUp) {
             assert.equal(actor.width, monitor.width);
             assert.notEqual(actor.name, 'panelBox', 'unallocated panels are not discoverable');
             this.chrome.add(actor);
+            this.chromeParams.set(actor, params);
         },
-        removeChrome(actor) { this.chrome.delete(actor); },
+        removeChrome(actor) {
+            this.chrome.delete(actor);
+            this.struts.delete(actor);
+        },
         untrackChrome() {},
         trackChrome(actor, params) {
             assert.equal(actor.name, 'panelBox');
             assert.equal(actor.children[0].has_allocation(), true);
             assert.equal(params.affectsStruts, true);
             assert.equal(params.trackFullscreen, true);
+            this.struts.add(actor);
         },
         findMonitorForActor(actor) {
             return this.monitors[actor.has_allocation() ? actor._monitorIndex : this.primaryIndex];
@@ -91,7 +98,7 @@ function createShell(startingUp) {
                 box.allocated = true;
                 const [panel] = box.children;
                 panel.allocated = true;
-                panel.emit('notify::allocation');
+                panel.vfunc_allocate();
             }
             flushIdle();
         },
@@ -114,7 +121,7 @@ function createShell(startingUp) {
             PRIORITY_DEFAULT_IDLE: 200,
         },
         GObject: {
-            registerClass: cls => class extends cls {
+            registerClass: (...args) => class extends args.at(-1) {
                 constructor(...args) { super(); this._init(...args); }
             },
         },
@@ -123,6 +130,7 @@ function createShell(startingUp) {
         Main: main,
         Panel: {Panel: class extends Actor {
             _init() { layoutManager.panelBox.add_child(this); }
+            vfunc_allocate() {}
         }},
     });
     const extension = vm.runInContext(
@@ -191,7 +199,7 @@ test('styling discovery waits for allocation even when enabled after startup', (
     extension.enable();
     const box = [...layoutManager.chrome][0];
     const [panel] = box.children;
-    panel.emit('notify::allocation');
+    panel.vfunc_allocate();
     flushIdle();
     assert.notEqual(box.name, 'panelBox');
     assert.equal(layoutManager.findMonitorForActor(panel).index, 0);
@@ -207,11 +215,65 @@ test('disable cancels publication queued by an allocation notification', () => {
     const {extension, layoutManager, idleCallbacks, flushIdle} = createShell(false);
     extension.enable();
     const box = [...layoutManager.chrome][0];
-    box.children[0].emit('notify::allocation');
+    box.children[0].vfunc_allocate();
     assert.equal(idleCallbacks.size, 1);
     extension.disable();
     assert.equal(idleCallbacks.size, 0);
     flushIdle();
     assert.notEqual(box.name, 'panelBox');
     assert.equal(layoutManager.chrome.size, 0);
+});
+
+test('struts are reserved only once the panel is discoverable', () => {
+    const {extension, layoutManager} = createShell(false);
+    extension.enable();
+    const box = [...layoutManager.chrome][0];
+    // Blur My Shell looks for panelBox on workareas-changed, so reserving
+    // space before the rename would hide the panel from it.
+    assert.equal(layoutManager.chromeParams.get(box).affectsStruts, undefined);
+    layoutManager.allocatePanels();
+    assert.equal(layoutManager.struts.has(box), true);
+    extension.disable();
+});
+
+test('publication retries after a relayout that keeps the same allocation', () => {
+    const {extension, layoutManager, flushIdle} = createShell(false);
+    extension.enable();
+    const box = [...layoutManager.chrome][0];
+    const [panel] = box.children;
+    box.allocated = panel.allocated = true;
+    panel.vfunc_allocate();
+    // Another relayout is queued before the idle runs.
+    box.allocated = panel.allocated = false;
+    flushIdle();
+    assert.notEqual(box.name, 'panelBox');
+
+    // The relayout ends with the same geometry: no notify::allocation.
+    box.allocated = panel.allocated = true;
+    panel.vfunc_allocate();
+    flushIdle();
+    assert.equal(box.name, 'panelBox');
+    assert.equal(layoutManager.struts.has(box), true);
+    extension.disable();
+});
+
+test('publication waits for the panel to be detected on its own monitor', () => {
+    const {extension, layoutManager, flushIdle} = createShell(false);
+    extension.enable();
+    const box = [...layoutManager.chrome][0];
+    const [panel] = box.children;
+    const findMonitorForActor = layoutManager.findMonitorForActor;
+    layoutManager.findMonitorForActor = () => layoutManager.monitors[0];
+    box.allocated = panel.allocated = true;
+    panel.vfunc_allocate();
+    flushIdle();
+    assert.notEqual(box.name, 'panelBox');
+    assert.equal(layoutManager.struts.has(box), false);
+
+    layoutManager.findMonitorForActor = findMonitorForActor;
+    panel.vfunc_allocate();
+    flushIdle();
+    assert.equal(box.name, 'panelBox');
+    assert.equal(layoutManager.struts.has(box), true);
+    extension.disable();
 });
