@@ -10,8 +10,9 @@ import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
 
 const PANEL_BOX_NAME = 'panelBox';
 
-const SecondaryPanel = GObject.registerClass(
-class SecondaryPanel extends Panel.Panel {
+const SecondaryPanel = GObject.registerClass({
+    Signals: {'allocated': {}},
+}, class SecondaryPanel extends Panel.Panel {
     _init(monitorIndex, panelBox) {
         super._init();
 
@@ -37,6 +38,14 @@ class SecondaryPanel extends Panel.Panel {
         const monitor = Main.layoutManager.monitors[this._monitorIndex];
 
         return [0, monitor?.width ?? 0];
+    }
+
+    vfunc_allocate(box) {
+        super.vfunc_allocate(box);
+
+        // notify::allocation only fires when the box changes; a relayout that
+        // keeps the same geometry must still retry publication.
+        this.emit('allocated');
     }
 
     destroy() {
@@ -88,7 +97,7 @@ class SecondaryPanelBox {
 
         this.panel = new SecondaryPanel(monitorIndex, this.actor);
         this.panel.connectObject(
-            'notify::allocation',
+            'allocated',
             () => this._queuePublishPanel(),
             this.actor
         );
