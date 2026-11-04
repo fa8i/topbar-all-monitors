@@ -7,13 +7,147 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
 const PANEL_BOX_NAME = 'panelBox';
 
 const menuSources = new WeakMap();
 
+const ACTOR_PROPERTIES = [
+    'visible', 'opacity', 'x-expand', 'y-expand', 'x-align', 'y-align',
+    'min-width', 'min-height', 'natural-width', 'natural-height',
+    'min-width-set', 'min-height-set', 'natural-width-set', 'natural-height-set',
+];
+
+const WIDGET_PROPERTIES = ['style-class', 'style', 'pseudo-class'];
+
+const REFLECTIONS = [
+    {
+        type: St.Icon,
+        create: () => new St.Icon(),
+        properties: ['gicon', 'fallback-gicon', 'icon-name', 'fallback-icon-name', 'icon-size'],
+        leaf: true,
+    },
+    {
+        type: St.Label,
+        create: () => new St.Label(),
+        properties: ['text'],
+        leaf: true,
+    },
+    {
+        type: PanelMenu.ButtonBox,
+        create: () => {
+            const buttonBox = new PanelMenu.ButtonBox();
+            buttonBox.container.set_child(null);
+            return buttonBox;
+        },
+        properties: [],
+    },
+    {
+        type: St.BoxLayout,
+        create: () => new St.BoxLayout(),
+        properties: ['orientation'],
+    },
+    {
+        type: St.Bin,
+        create: () => new St.Bin(),
+        properties: [],
+    },
+];
+
+function reflectActor(source) {
+    const reflection = REFLECTIONS.find(({type}) => source instanceof type);
+    if (!reflection)
+        return new ClonedActor(source);
+
+    const target = reflection.create();
+    const bindings = [...ACTOR_PROPERTIES, ...WIDGET_PROPERTIES, ...reflection.properties]
+        .map(name => source.bind_property(name, target, name,
+            GObject.BindingFlags.SYNC_CREATE));
+    target.connect('destroy', () => {
+        for (const binding of bindings)
+            binding.unbind();
+        source.disconnectObject(target);
+    });
+
+    if (!reflection.leaf) {
+        const syncChildren = () => {
+            if (target instanceof St.Bin) {
+                const child = source.get_first_child();
+                target.child?.destroy();
+                target.set_child(child ? reflectActor(child) : null);
+                return;
+            }
+
+            target.destroy_all_children();
+            for (const child of source.get_children())
+                target.add_child(reflectActor(child));
+        };
+
+        source.connectObject(
+            'child-added', syncChildren,
+            'child-removed', syncChildren,
+            target
+        );
+        syncChildren();
+    }
+
+    return target;
+}
+
+const ClonedActor = GObject.registerClass(
+class ClonedActor extends St.Widget {
+    _init(source) {
+        super._init();
+
+        this.source = source;
+        this._clone = new Clutter.Clone({source});
+        this.add_child(this._clone);
+
+        source.bind_property('visible', this, 'visible',
+            GObject.BindingFlags.SYNC_CREATE);
+        source.connectObject('notify::allocation', () => this.queue_relayout(), this);
+    }
+
+    vfunc_get_preferred_width(forHeight) {
+        if (!this.source.has_allocation())
+            return this.source.get_preferred_width(forHeight);
+
+        const [width] = this.source.get_allocation_box().get_size();
+        return [width, width];
+    }
+
+    vfunc_get_preferred_height(forWidth) {
+        if (!this.source.has_allocation())
+            return this.source.get_preferred_height(forWidth);
+
+        const [, height] = this.source.get_allocation_box().get_size();
+        return [height, height];
+    }
+
+    vfunc_allocate(box) {
+        this.set_allocation(box);
+
+        if (!this.source.has_allocation()) {
+            const height = box.get_height();
+            const [, width] = this.source.get_preferred_width(height);
+            const sourceBox = this.source.get_allocation_box();
+            sourceBox.set_size(width, height);
+            this.source.allocate(sourceBox);
+        }
+
+        const [width, height] = this.source.get_allocation_box().get_size();
+        const cloneBox = new Clutter.ActorBox();
+        cloneBox.set_origin(
+            Math.round((box.get_width() - width) / 2),
+            Math.round((box.get_height() - height) / 2));
+        cloneBox.set_size(width, height);
+        this._clone.allocate(cloneBox);
+    }
+});
+
 const MirroredItem = GObject.registerClass(
-class MirroredItem extends St.Widget {
+class MirroredItem extends St.Bin {
     _init(source) {
         super._init({
             reactive: true,
@@ -22,8 +156,7 @@ class MirroredItem extends St.Widget {
 
         this.source = source;
         this._anchor = {};
-        this._clone = new Clutter.Clone({source});
-        this.add_child(this._clone);
+        this.set_child(reflectActor(source));
 
         const child = source.get_first_child?.();
         this._button = child?.menu ? child : source;
@@ -31,8 +164,6 @@ class MirroredItem extends St.Widget {
         for (const actor of new Set([source, this._button]))
             actor.connectObject('notify::visible', () => this._syncVisible(), this);
         this._syncVisible();
-
-        source.connectObject('notify::allocation', () => this.queue_relayout(), this);
 
         this.connect('notify::hover', () => this._syncHover());
 
@@ -69,42 +200,6 @@ class MirroredItem extends St.Widget {
             if (this.hover && this._button instanceof St.Widget)
                 this._button.hover = false;
         });
-    }
-
-    vfunc_get_preferred_width(forHeight) {
-        if (!this.source.has_allocation())
-            return this.source.get_preferred_width(forHeight);
-
-        const [width] = this.source.get_allocation_box().get_size();
-        return [width, width];
-    }
-
-    vfunc_get_preferred_height(forWidth) {
-        if (!this.source.has_allocation())
-            return this.source.get_preferred_height(forWidth);
-
-        const [, height] = this.source.get_allocation_box().get_size();
-        return [height, height];
-    }
-
-    vfunc_allocate(box) {
-        this.set_allocation(box);
-
-        if (!this.source.has_allocation() && !this.source.mapped) {
-            const height = box.get_height();
-            const [, width] = this.source.get_preferred_width(height);
-            const sourceBox = this.source.get_allocation_box();
-            sourceBox.set_size(width, height);
-            this.source.allocate(sourceBox);
-        }
-
-        const [width, height] = this.source.get_allocation_box().get_size();
-        const cloneBox = new Clutter.ActorBox();
-        cloneBox.set_origin(
-            Math.round((box.get_width() - width) / 2),
-            Math.round((box.get_height() - height) / 2));
-        cloneBox.set_size(width, height);
-        this._clone.allocate(cloneBox);
     }
 
     _syncVisible() {

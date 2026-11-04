@@ -104,10 +104,56 @@ class Actor extends Signals {
     queue_relayout() { this.relayouts = (this.relayouts ?? 0) + 1; }
     get_style_class_name() { return ''; }
     set_style_class_name() {}
+    bind_property(name, target, targetName) {
+        const property = name.replace(/-/g, '_');
+        const targetProperty = targetName.replace(/-/g, '_');
+        const binding = {unbind: () => this.disconnectObject(binding)};
+        const sync = () => {
+            if (property in this)
+                target[targetProperty] = this[property];
+        };
+        this.connectObject(`notify::${name}`, sync, binding);
+        sync();
+        return binding;
+    }
+    destroy_all_children() {
+        for (const child of [...this.children])
+            child.destroy();
+    }
     destroy() {
+        this.destroy_all_children();
         this.destroyed = true;
         this.emit('destroy');
         this.parent?.remove_child(this);
+    }
+}
+
+class Widget extends Actor {}
+class Icon extends Widget {}
+class Label extends Widget {}
+class BoxLayout extends Widget {}
+
+class Bin extends Widget {
+    set_child(child) {
+        if (this.child)
+            this.remove_child(this.child);
+        this.child = child;
+        if (child)
+            this.add_child(child);
+    }
+
+    remove_child(actor) {
+        super.remove_child(actor);
+        if (this.child === actor)
+            this.child = null;
+    }
+}
+
+class ButtonBox extends Widget {
+    constructor(properties) {
+        super(properties);
+        this.container = new Bin();
+        this.container.set_child(this);
     }
 }
 
@@ -136,16 +182,18 @@ class Menu extends Signals {
 }
 
 function createIndicator({gesture = true} = {}) {
-    const button = new Actor();
+    const button = new ButtonBox({style_class: 'panel-button'});
     button.menu = new Menu(button);
+    const box = new BoxLayout();
+    const icon = new Icon({gicon: 'icon-a', icon_size: 16});
+    box.add_child(icon);
+    button.add_child(box);
     if (gesture) {
         const clickGesture = new ClickGesture();
         clickGesture.connect('recognize', () => button.menu.toggle());
         button.add_action(clickGesture);
     }
-    const container = new Actor();
-    container.add_child(button);
-    return {button, container};
+    return {button, container: button.container, box, icon};
 }
 
 function createPanelBoxes(panel, statusArea) {
@@ -249,8 +297,10 @@ function createShell(startingUp) {
             registerClass: (...args) => class extends args.at(-1) {
                 constructor(...args) { super(); this._init(...args); }
             },
+            BindingFlags: {SYNC_CREATE: 2},
         },
-        St: {BoxLayout: Actor, Bin: Actor, Widget: Actor},
+        St: {BoxLayout, Bin, Widget, Icon, Label},
+        PanelMenu: {ButtonBox},
         Extension: class {},
         Main: main,
         Panel: {Panel: class extends Actor {
@@ -525,38 +575,70 @@ test('disable closes mirrored menus and stops following the primary panel', () =
         assert.equal(box.handlers.length, 0);
 });
 
-test('mirrors paint their source at its own size', () => {
+test('mirrors rebuild widgets so they render at the secondary monitor scale', () => {
     const {extension, layoutManager, main} = createShell(false);
-    const {container} = createIndicator();
+    const {container, box, icon} = createIndicator();
     main.panel._rightBox.add_child(container);
-    container.allocate(new ActorBox({x1: 100, x2: 140, y2: 24}));
     extension.enable();
     const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
         .filter(child => child.source);
 
-    assert.deepEqual([...mirror.vfunc_get_preferred_width(-1)], [40, 40]);
-    mirror.vfunc_allocate(new ActorBox({x2: 40, y2: 32}));
-    const clone = mirror.children[0];
-    assert.deepEqual(clone.allocationBox, new ActorBox({x1: 0, y1: 4, x2: 40, y2: 28}),
+    const reflectedContainer = mirror.child;
+    const reflectedButton = reflectedContainer.child;
+    const [reflectedBox] = reflectedButton.children;
+    const [reflectedIcon] = reflectedBox.children;
+    assert.ok(reflectedContainer instanceof Bin && reflectedContainer !== container);
+    assert.ok(reflectedButton instanceof ButtonBox);
+    assert.equal(reflectedButton.style_class, 'panel-button');
+    assert.ok(reflectedIcon instanceof Icon, 'icons are real icons, not clones');
+    assert.equal(reflectedIcon.gicon, 'icon-a');
+    assert.equal(reflectedIcon.icon_size, 16);
+
+    icon.gicon = 'icon-b';
+    icon.emit('notify::gicon');
+    assert.equal(reflectedIcon.gicon, 'icon-b');
+
+    box.add_child(new Label({text: 'Claude'}));
+    const [, reflectedLabel] = reflectedButton.children[0].children;
+    assert.ok(reflectedLabel instanceof Label);
+    assert.equal(reflectedLabel.text, 'Claude');
+
+    extension.disable();
+    assert.equal(icon.handlers.length, 0, 'bindings are released');
+    assert.equal(box.handlers.length, 0);
+});
+
+test('unknown actors are cloned at their own size', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const source = new Actor();
+    main.panel._rightBox.add_child(source);
+    source.allocate(new ActorBox({x1: 100, x2: 140, y2: 24}));
+    extension.enable();
+    const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
+        .filter(child => child.source);
+    const leaf = mirror.child;
+
+    assert.deepEqual([...leaf.vfunc_get_preferred_width(-1)], [40, 40]);
+    leaf.vfunc_allocate(new ActorBox({x2: 40, y2: 32}));
+    assert.deepEqual(leaf.children[0].allocationBox, new ActorBox({x1: 0, y1: 4, x2: 40, y2: 28}),
         'the clone keeps the source size instead of being scaled');
 
-    container.emit('notify::allocation');
-    assert.equal(mirror.relayouts, 1);
+    source.emit('notify::allocation');
+    assert.equal(leaf.relayouts, 1);
     extension.disable();
 });
 
-test('mirrors lay out a hidden source at the secondary panel height', () => {
+test('cloned actors lay out a source without allocation at the panel height', () => {
     const {extension, layoutManager, main} = createShell(false);
-    const {container} = createIndicator();
-    main.panel._rightBox.add_child(container);
-    container.preferredWidth = 30;
-    container.mapped = false;
+    const source = new Actor({preferredWidth: 30});
+    main.panel._rightBox.add_child(source);
     extension.enable();
     const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
         .filter(child => child.source);
+    const leaf = mirror.child;
 
-    mirror.vfunc_allocate(new ActorBox({x2: 30, y2: 32}));
-    assert.deepEqual([...container.get_allocation_box().get_size()], [30, 32]);
-    assert.deepEqual(mirror.children[0].allocationBox, new ActorBox({x2: 30, y2: 32}));
+    leaf.vfunc_allocate(new ActorBox({x2: 30, y2: 32}));
+    assert.deepEqual([...source.get_allocation_box().get_size()], [30, 32]);
+    assert.deepEqual(leaf.children[0].allocationBox, new ActorBox({x2: 30, y2: 32}));
     extension.disable();
 });
