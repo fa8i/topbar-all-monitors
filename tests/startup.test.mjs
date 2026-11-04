@@ -35,6 +35,26 @@ class Signals {
     }
 }
 
+class ActorBox {
+    constructor({x1 = 0, y1 = 0, x2 = 0, y2 = 0} = {}) {
+        Object.assign(this, {x1, y1, x2, y2});
+    }
+
+    set_origin(x, y) {
+        const [width, height] = this.get_size();
+        Object.assign(this, {x1: x, y1: y, x2: x + width, y2: y + height});
+    }
+
+    set_size(width, height) {
+        this.x2 = this.x1 + width;
+        this.y2 = this.y1 + height;
+    }
+
+    get_width() { return this.x2 - this.x1; }
+    get_height() { return this.y2 - this.y1; }
+    get_size() { return [this.get_width(), this.get_height()]; }
+}
+
 class Actor extends Signals {
     children = [];
     actions = [];
@@ -73,6 +93,15 @@ class Actor extends Signals {
     }
     set_name(name) { this.name = name; }
     has_allocation() { return this.allocated ?? false; }
+    get_allocation_box() { return new ActorBox(this.allocationBox); }
+    allocate(box) {
+        this.allocationBox = new ActorBox(box);
+        this.allocated = true;
+    }
+    set_allocation(box) { this.allocate(box); }
+    get_preferred_width() { return [this.preferredWidth ?? 0, this.preferredWidth ?? 0]; }
+    get_preferred_height() { return [this.preferredHeight ?? 0, this.preferredHeight ?? 0]; }
+    queue_relayout() { this.relayouts = (this.relayouts ?? 0) + 1; }
     get_style_class_name() { return ''; }
     set_style_class_name() {}
     destroy() {
@@ -201,6 +230,7 @@ function createShell(startingUp) {
         Clutter: {
             Orientation: {VERTICAL: 1},
             Clone: Actor,
+            ActorBox,
             ClickGesture,
             EventType: {TOUCH_BEGIN: 9},
             EVENT_PROPAGATE: false,
@@ -493,4 +523,40 @@ test('disable closes mirrored menus and stops following the primary panel', () =
     assert.equal(idleCallbacks.size, 0);
     for (const box of [main.panel._leftBox, main.panel._centerBox, main.panel._rightBox])
         assert.equal(box.handlers.length, 0);
+});
+
+test('mirrors paint their source at its own size', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const {container} = createIndicator();
+    main.panel._rightBox.add_child(container);
+    container.allocate(new ActorBox({x1: 100, x2: 140, y2: 24}));
+    extension.enable();
+    const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
+        .filter(child => child.source);
+
+    assert.deepEqual([...mirror.vfunc_get_preferred_width(-1)], [40, 40]);
+    mirror.vfunc_allocate(new ActorBox({x2: 40, y2: 32}));
+    const clone = mirror.children[0];
+    assert.deepEqual(clone.allocationBox, new ActorBox({x1: 0, y1: 4, x2: 40, y2: 28}),
+        'the clone keeps the source size instead of being scaled');
+
+    container.emit('notify::allocation');
+    assert.equal(mirror.relayouts, 1);
+    extension.disable();
+});
+
+test('mirrors lay out a hidden source at the secondary panel height', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const {container} = createIndicator();
+    main.panel._rightBox.add_child(container);
+    container.preferredWidth = 30;
+    container.mapped = false;
+    extension.enable();
+    const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
+        .filter(child => child.source);
+
+    mirror.vfunc_allocate(new ActorBox({x2: 30, y2: 32}));
+    assert.deepEqual([...container.get_allocation_box().get_size()], [30, 32]);
+    assert.deepEqual(mirror.children[0].allocationBox, new ActorBox({x2: 30, y2: 32}));
+    extension.disable();
 });
