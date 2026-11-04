@@ -105,7 +105,9 @@ function createShell(startingUp) {
     });
     const main = {
         layoutManager,
-        panel: new Actor(),
+        panel: Object.assign(new Actor(), {
+            statusArea: {a11y: {container: new Actor({visible: true})}},
+        }),
         ctrlAltTabManager: {removeGroup() {}},
     };
     const context = vm.createContext({
@@ -129,7 +131,13 @@ function createShell(startingUp) {
         Extension: class {},
         Main: main,
         Panel: {Panel: class extends Actor {
-            _init() { layoutManager.panelBox.add_child(this); }
+            _init() {
+                this.statusArea = {
+                    a11y: {container: new Actor({visible: true})},
+                    dwellClick: {container: new Actor({visible: true})},
+                };
+                layoutManager.panelBox.add_child(this);
+            }
             vfunc_allocate() {}
         }},
     });
@@ -276,4 +284,23 @@ test('publication waits for the panel to be detected on its own monitor', () => 
     assert.equal(box.name, 'panelBox');
     assert.equal(layoutManager.struts.has(box), true);
     extension.disable();
+});
+
+test('indicator visibility follows the primary panel', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const source = main.panel.statusArea.a11y.container;
+    source.visible = false;
+    extension.enable();
+    const [panel] = [...layoutManager.chrome][0].children;
+    const target = panel.statusArea.a11y.container;
+    assert.equal(target.visible, false);
+    assert.equal(panel.statusArea.dwellClick.container.visible, true,
+        'indicators missing from the primary panel keep their own visibility');
+
+    source.visible = true;
+    source.emit('notify::visible');
+    assert.equal(target.visible, true);
+
+    extension.disable();
+    assert.equal(source.handlers.length, 0);
 });

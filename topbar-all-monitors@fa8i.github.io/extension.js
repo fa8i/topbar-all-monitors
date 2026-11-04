@@ -28,10 +28,29 @@ const SecondaryPanel = GObject.registerClass({
         );
 
         this._syncStyleClass();
+        this._mirrorIndicatorVisibility();
     }
 
     _syncStyleClass() {
         this.set_style_class_name(Main.panel.get_style_class_name());
+    }
+
+    _mirrorIndicatorVisibility() {
+        this._mirroredContainers = [];
+
+        for (const [role, indicator] of Object.entries(this.statusArea)) {
+            const source = Main.panel.statusArea[role]?.container;
+            const target = indicator.container;
+            if (!source || source === target)
+                continue;
+
+            const sync = () => {
+                target.visible = source.visible;
+            };
+            source.connectObject('notify::visible', sync, this);
+            this._mirroredContainers.push(source);
+            sync();
+        }
     }
 
     vfunc_get_preferred_width(_forHeight) {
@@ -50,6 +69,9 @@ const SecondaryPanel = GObject.registerClass({
 
     destroy() {
         Main.panel.disconnectObject(this);
+        for (const source of this._mirroredContainers)
+            source.disconnectObject(this);
+        this._mirroredContainers = [];
         Main.ctrlAltTabManager.removeGroup(this);
 
         super.destroy();
