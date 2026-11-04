@@ -11,6 +11,10 @@ const source = readFileSync(new URL(
 class Signals {
     handlers = [];
 
+    connect(name, callback) {
+        this.handlers.push({name, callback, owner: null});
+    }
+
     connectObject(...args) {
         const owner = args.pop();
         for (let i = 0; i < args.length; i += 2)
@@ -21,29 +25,112 @@ class Signals {
         this.handlers = this.handlers.filter(handler => handler.owner !== owner);
     }
 
-    emit(name) {
+    emit(name, ...args) {
+        let result;
         for (const handler of [...this.handlers]) {
             if (handler.name === name)
-                handler.callback();
+                result = handler.callback(this, ...args);
         }
+        return result;
     }
 }
 
 class Actor extends Signals {
     children = [];
+    actions = [];
+    forwardedEvents = [];
+    visible = true;
 
     constructor(properties = {}) {
         super();
         Object.assign(this, properties);
     }
 
-    add_child(actor) { this.children.push(actor); }
-    remove_child(actor) { this.children.splice(this.children.indexOf(actor), 1); }
+    _init(properties = {}) { Object.assign(this, properties); }
+    add_child(actor) { this.insert_child_at_index(actor, this.children.length); }
+    insert_child_at_index(actor, index) {
+        this.children.splice(index, 0, actor);
+        actor.parent = this;
+        this.emit('child-added', actor);
+    }
+    remove_child(actor) {
+        this.children.splice(this.children.indexOf(actor), 1);
+        actor.parent = null;
+        this.emit('child-removed', actor);
+    }
+    set_child_at_index(actor, index) {
+        this.children.splice(this.children.indexOf(actor), 1);
+        this.children.splice(index, 0, actor);
+    }
+    get_children() { return [...this.children]; }
+    get_first_child() { return this.children[0] ?? null; }
+    get_parent() { return this.parent ?? null; }
+    get_actions() { return this.actions; }
+    add_action(action) { this.actions.push(action); }
+    event(event) {
+        this.forwardedEvents.push(event);
+        return true;
+    }
     set_name(name) { this.name = name; }
     has_allocation() { return this.allocated ?? false; }
     get_style_class_name() { return ''; }
     set_style_class_name() {}
-    destroy() { this.destroyed = true; }
+    destroy() {
+        this.destroyed = true;
+        this.emit('destroy');
+        this.parent?.remove_child(this);
+    }
+}
+
+class ClickGesture extends Signals {
+    enabled = true;
+    set_recognize_on_press(recognizeOnPress) { this.recognizeOnPress = recognizeOnPress; }
+}
+
+class Menu extends Signals {
+    isOpen = false;
+
+    constructor(sourceActor) {
+        super();
+        this.sourceActor = sourceActor;
+    }
+
+    toggle() {
+        this.isOpen = !this.isOpen;
+        this.emit('open-state-changed', this.isOpen);
+    }
+
+    close() {
+        if (this.isOpen)
+            this.toggle();
+    }
+}
+
+function createIndicator({gesture = true} = {}) {
+    const button = new Actor();
+    button.menu = new Menu(button);
+    if (gesture) {
+        const clickGesture = new ClickGesture();
+        clickGesture.connect('recognize', () => button.menu.toggle());
+        button.add_action(clickGesture);
+    }
+    const container = new Actor();
+    container.add_child(button);
+    return {button, container};
+}
+
+function createPanelBoxes(panel, statusArea) {
+    panel._leftBox = new Actor();
+    panel._centerBox = new Actor();
+    panel._rightBox = new Actor();
+    panel.statusArea = statusArea;
+    for (const indicator of Object.values(statusArea))
+        panel._rightBox.add_child(indicator.container);
+    return panel;
+}
+
+function getSecondaryPanel(layoutManager) {
+    return [...layoutManager.chrome][0].children[0];
 }
 
 function createShell(startingUp) {
@@ -105,13 +192,19 @@ function createShell(startingUp) {
     });
     const main = {
         layoutManager,
-        panel: Object.assign(new Actor(), {
-            statusArea: {a11y: {container: new Actor({visible: true})}},
+        panel: createPanelBoxes(new Actor(), {
+            a11y: {container: new Actor({visible: true})},
         }),
         ctrlAltTabManager: {removeGroup() {}},
     };
     const context = vm.createContext({
-        Clutter: {Orientation: {VERTICAL: 1}},
+        Clutter: {
+            Orientation: {VERTICAL: 1},
+            Clone: Actor,
+            ClickGesture,
+            EventType: {TOUCH_BEGIN: 9},
+            EVENT_PROPAGATE: false,
+        },
         GLib: {
             idle_add(_priority, callback) {
                 const id = nextIdleId++;
@@ -127,15 +220,15 @@ function createShell(startingUp) {
                 constructor(...args) { super(); this._init(...args); }
             },
         },
-        St: {BoxLayout: Actor},
+        St: {BoxLayout: Actor, Bin: Actor, Widget: Actor},
         Extension: class {},
         Main: main,
         Panel: {Panel: class extends Actor {
             _init() {
-                this.statusArea = {
+                createPanelBoxes(this, {
                     a11y: {container: new Actor({visible: true})},
                     dwellClick: {container: new Actor({visible: true})},
-                };
+                });
                 layoutManager.panelBox.add_child(this);
             }
             vfunc_allocate() {}
@@ -303,4 +396,101 @@ test('indicator visibility follows the primary panel', () => {
 
     extension.disable();
     assert.equal(source.handlers.length, 0);
+});
+
+test('extension items on the primary panel are mirrored in place', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const {container} = createIndicator();
+    main.panel._rightBox.insert_child_at_index(container, 0);
+    extension.enable();
+
+    const panel = getSecondaryPanel(layoutManager);
+    const [mirror, a11y, dwellClick] = panel._rightBox.children;
+    assert.equal(mirror.source, container);
+    assert.equal(a11y, panel.statusArea.a11y.container,
+        'built-in indicators keep their own instance');
+    assert.equal(dwellClick, panel.statusArea.dwellClick.container);
+    assert.equal(panel._rightBox.children.filter(child => child.source).length, 1);
+    extension.disable();
+});
+
+test('mirrors follow items added, hidden and removed later', () => {
+    const {extension, layoutManager, main, flushIdle} = createShell(false);
+    extension.enable();
+    const panel = getSecondaryPanel(layoutManager);
+
+    const {container, button} = createIndicator();
+    main.panel._leftBox.add_child(container);
+    assert.equal(panel._leftBox.children.length, 0, 'changes are batched');
+    flushIdle();
+    const [mirror] = panel._leftBox.children;
+    assert.equal(mirror.source, container);
+
+    button.visible = false;
+    button.emit('notify::visible');
+    assert.equal(mirror.visible, false);
+    button.visible = true;
+    button.emit('notify::visible');
+    assert.equal(mirror.visible, true);
+
+    main.panel._leftBox.remove_child(container);
+    flushIdle();
+    assert.equal(panel._leftBox.children.length, 0);
+    assert.equal(mirror.destroyed, true);
+    extension.disable();
+});
+
+test('mirrored menus open from the secondary panel', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const {container, button} = createIndicator();
+    main.panel._rightBox.add_child(container);
+    extension.enable();
+    const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
+        .filter(child => child.source);
+
+    mirror.actions[0].emit('recognize');
+    assert.equal(button.menu.isOpen, true);
+    assert.equal(button.menu.sourceActor, mirror);
+
+    button.menu.close();
+    assert.equal(button.menu.sourceActor, button);
+    extension.disable();
+});
+
+test('items without a click gesture receive forwarded events', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    const {container, button} = createIndicator({gesture: false});
+    main.panel._rightBox.add_child(container);
+    extension.enable();
+    const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
+        .filter(child => child.source);
+
+    const press = {type: () => 0};
+    assert.equal(mirror.emit('button-press-event', press), true);
+    assert.deepEqual(button.forwardedEvents, [press]);
+    assert.equal(button.menu.sourceActor, mirror);
+
+    button.emit('captured-event');
+    assert.equal(button.menu.sourceActor, button,
+        'the original button takes its menu back');
+    extension.disable();
+});
+
+test('disable closes mirrored menus and stops following the primary panel', () => {
+    const {extension, layoutManager, main, idleCallbacks} = createShell(false);
+    const {container, button} = createIndicator();
+    main.panel._rightBox.add_child(container);
+    extension.enable();
+    const [mirror] = getSecondaryPanel(layoutManager)._rightBox.children
+        .filter(child => child.source);
+    mirror.actions[0].emit('recognize');
+
+    main.panel._leftBox.add_child(createIndicator().container);
+    extension.disable();
+    assert.equal(button.menu.isOpen, false);
+    assert.equal(button.menu.sourceActor, button);
+    assert.equal(mirror.destroyed, true);
+    assert.equal(idleCallbacks.size, 0);
+    for (const box of [main.panel._leftBox, main.panel._centerBox, main.panel._rightBox])
+        assert.equal(box.handlers.length, 0);
 });

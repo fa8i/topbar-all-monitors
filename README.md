@@ -15,6 +15,9 @@ top bar to every secondary monitor.
 - Fullscreen-aware panel behaviour.
 - Automatic monitor hot-plug support.
 - Styling synchronized with the main GNOME Shell panel.
+- Indicators added to the main panel by other extensions are mirrored on
+  every secondary panel, and their menus open on that monitor.
+- Indicators hidden on the main panel are also hidden on secondary panels.
 - Improved compatibility with themes and panel styling extensions.
 
 Secondary panels are created after GNOME Shell finishes its startup animation,
@@ -33,8 +36,10 @@ third-party extension.
 - Per-monitor panel layouts are not currently configurable.
 - Panel elements cannot currently be enabled or disabled independently for
   each monitor.
-- Extensions that explicitly add their indicators only to `Main.panel` may
-  remain limited to the primary monitor.
+- Mirrored indicators share a single menu with the main panel, so it can be
+  open on only one monitor at a time.
+- Items that extensions add inside the Quick Settings menu appear only in the
+  main panel's Quick Settings.
 
 ## Installation from git
 
