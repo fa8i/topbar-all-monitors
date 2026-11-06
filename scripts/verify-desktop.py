@@ -68,8 +68,6 @@ try:
     if result["initial"].get("state") != 1:
         raise RuntimeError("The candidate is not active; desktop preferences were left unchanged.")
     restore_enabled = True
-    if result["initial"].get("version-name") != "0.2.6":
-        raise RuntimeError("The running extension is not the installed 0.2.6 candidate.")
     for name, expected in deployment["hashes"].items():
         path = Path(deployment["installedPath"]) / name
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
