@@ -3,8 +3,7 @@
   "name": "Top Bar All Monitors",
   "description": "Add a functional GNOME top bar to secondary monitors.",
   "shell-version": [
-    "50",
-    "51"
+    "50"
   ],
   "version-name": "0.2.6",
   "url": "https://github.com/fa8i/topbar-all-monitors",
