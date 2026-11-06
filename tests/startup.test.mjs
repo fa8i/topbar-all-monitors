@@ -7,6 +7,9 @@ import vm from 'node:vm';
 const source = readFileSync(new URL(
     '../topbar-all-monitors@fa8i.github.io/extension.js', import.meta.url
 ), 'utf8').replace(/^import .*;\n/gm, '').replace('export default class', 'class');
+const panelSignals = readFileSync(new URL(
+    '../topbar-all-monitors@fa8i.github.io/panelSignals.js', import.meta.url
+), 'utf8').replace('export class', 'class');
 
 class Signals {
     handlers = [];
@@ -43,6 +46,11 @@ class Actor extends Signals {
     has_allocation() { return this.allocated ?? false; }
     get_style_class_name() { return ''; }
     set_style_class_name() {}
+    has_style_pseudo_class(name) { return this.pseudoClasses?.has(name) ?? false; }
+    add_style_pseudo_class(name) {
+        this.pseudoClasses ??= new Set();
+        this.pseudoClasses.add(name);
+    }
     destroy() { this.destroyed = true; }
 }
 
@@ -105,11 +113,16 @@ function createShell(startingUp) {
     });
     const main = {
         layoutManager,
+        messageTray: Object.assign(new Signals(), {getSources: () => []}),
+        sessionMode: new Signals(),
         panel: new Actor(),
         ctrlAltTabManager: {removeGroup() {}},
     };
     const context = vm.createContext({
-        Clutter: {Orientation: {VERTICAL: 1}},
+        Gio: {DBusProxy: class {init_async() { return Promise.resolve(); }},
+            Cancellable: class {cancel() {}}},
+        Clutter: {Orientation: {VERTICAL: 1}, Actor},
+        Signals: {EventEmitter: Signals},
         GLib: {
             idle_add(_priority, callback) {
                 const id = nextIdleId++;
@@ -118,14 +131,18 @@ function createShell(startingUp) {
             },
             Source: {remove: id => idleCallbacks.delete(id)},
             SOURCE_REMOVE: false,
+            MainContext: {default: () => ({find_source_by_id: id =>
+                idleCallbacks.has(id) ? {destroy: () => idleCallbacks.delete(id)} : null})},
             PRIORITY_DEFAULT_IDLE: 200,
         },
         GObject: {
+            Object: class {},
             registerClass: (...args) => class extends args.at(-1) {
                 constructor(...args) { super(); this._init(...args); }
             },
         },
         St: {BoxLayout: Actor},
+        Shell: {AppSystem: {get_default: () => ({})}},
         Extension: class {},
         Main: main,
         Panel: {Panel: class extends Actor {
@@ -134,7 +151,7 @@ function createShell(startingUp) {
         }},
     });
     const extension = vm.runInContext(
-        `${source}\nnew TopBarAllMonitorsExtension();`, context
+        `${panelSignals}\n${source}\nnew TopBarAllMonitorsExtension();`, context
     );
     return {extension, layoutManager, main, flushIdle, idleCallbacks};
 }
@@ -191,6 +208,19 @@ test('disconnecting the secondary monitor removes its panel', () => {
     layoutManager.monitors.pop();
     layoutManager.emit('monitors-changed');
     assert.equal(layoutManager.chrome.size, 0);
+    extension.disable();
+});
+
+test('panels created or rebuilt during overview inherit its current style', () => {
+    const {extension, layoutManager, main} = createShell(false);
+    main.panel.add_style_pseudo_class('overview');
+    extension.enable();
+    let panel = [...layoutManager.chrome][0].children[0];
+    assert.equal(panel.has_style_pseudo_class('overview'), true);
+
+    layoutManager.emit('monitors-changed');
+    panel = [...layoutManager.chrome][0].children[0];
+    assert.equal(panel.has_style_pseudo_class('overview'), true);
     extension.disable();
 });
 

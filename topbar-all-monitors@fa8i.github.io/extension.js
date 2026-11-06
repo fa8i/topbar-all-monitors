@@ -1,12 +1,17 @@
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
+import * as Signals from 'resource:///org/gnome/shell/misc/signals.js';
+import {PanelSignals} from './panelSignals.js';
+import {SecondaryQuickSettings} from './secondaryQuickSettings.js';
 
 const PANEL_BOX_NAME = 'panelBox';
 
@@ -14,7 +19,24 @@ const SecondaryPanel = GObject.registerClass({
     Signals: {'allocated': {}},
 }, class SecondaryPanel extends Panel.Panel {
     _init(monitorIndex, panelBox) {
-        super._init();
+        const connections = new PanelSignals(
+            () => [GObject.Object.prototype, Signals.EventEmitter.prototype,
+                Main.messageTray, Main.sessionMode,
+                Shell.AppSystem.get_default(), ...Main.messageTray.getSources()],
+            (emitter, id) => emitter instanceof GObject.Object
+                ? GObject.signal_handler_is_connected(emitter, id)
+                : emitter.signalHandlerIsConnected(id),
+            emitter => emitter === Main.messageTray || !(emitter instanceof Clutter.Actor),
+            {api: GLib, remove: id => GLib.MainContext.default().find_source_by_id(id)?.destroy()},
+            {prototype: Gio.DBusProxy.prototype, createCancellable: () => new Gio.Cancellable()}
+        );
+        this._nativeConnections = connections;
+        try {
+            connections.run(() => super._init());
+        } catch (error) {
+            connections.close();
+            throw error;
+        }
 
         this._monitorIndex = monitorIndex;
 
@@ -28,10 +50,21 @@ const SecondaryPanel = GObject.registerClass({
         );
 
         this._syncStyleClass();
+
+        // Panel._init() follows future overview signals. A panel created after
+        // startup or a monitor change must also inherit the current state.
+        if (Main.panel.has_style_pseudo_class('overview'))
+            this.add_style_pseudo_class('overview');
     }
 
     _syncStyleClass() {
         this.set_style_class_name(Main.panel.get_style_class_name());
+    }
+
+    _ensureIndicator(role) {
+        if (role === 'quickSettings' && !this.statusArea[role])
+            this.statusArea[role] = new SecondaryQuickSettings(this._nativeConnections);
+        return super._ensureIndicator(role);
     }
 
     vfunc_get_preferred_width(_forHeight) {
@@ -49,6 +82,7 @@ const SecondaryPanel = GObject.registerClass({
     }
 
     destroy() {
+        this._nativeConnections.close();
         Main.panel.disconnectObject(this);
         Main.ctrlAltTabManager.removeGroup(this);
 

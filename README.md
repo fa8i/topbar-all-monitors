@@ -22,7 +22,7 @@ so styling extensions can identify their monitors using stable coordinates.
 
 ## Compatibility
 
-- GNOME Shell 50
+- GNOME Shell 50 and 51
 - Wayland
 
 The extension does not import, detect, modify, or depend directly on any
@@ -65,11 +65,18 @@ The generated ZIP will be available in `dist/`.
 Run the lifecycle regression tests with Node.js:
 
 ```bash
-node --test tests/startup.test.mjs
+node --test tests/*.test.mjs
 ```
 
 The tests use a simulated Shell with synthetic monitor data. They are not
 included in the extension ZIP. Check visual effects separately in GNOME Shell.
+
+For the GNOME 51.1 source audit and isolated compositor test instructions, see
+[the compatibility notes](docs/gnome-51.md).
+
+On an Ubuntu system with GNOME Shell 50.1, run the same integration checks in
+a private headless session with `python3 scripts/test-gnome50.py`. This does
+not install the candidate into the running desktop.
 
 ## Support
 
