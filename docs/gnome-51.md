@@ -46,8 +46,9 @@ initial state from the primary panel and continue using upstream signals.
 A Node regression test covers creation and rebuilding during overview.
 
 The candidate declares support for `50` and `51`; the major-version entry also
-covers 51.1. `version-name` is `0.2.6`; the numeric submission version remains
-managed by GNOME Extensions. The lifecycle correction now passes the isolated
+covers 51.1. Release tags such as `v0.2.6` belong to Git. Metadata omits
+`version` and `version-name` so GNOME Extensions assigns and displays its own
+integer submission version. The lifecycle correction now passes the isolated
 50.1 and 51.1 compositor checks, plus the fresh-login smoke test in the user's
 GNOME 50.1 desktop, as described below.
 
@@ -227,3 +228,18 @@ The installed Shexli 0.2.1 reports one separate finding, `EGO-M-004`, because
 its metadata rule hardcodes `major > 50` as an implausible future release.
 This is an outdated analyzer limit, not evidence that 51 is invalid. No
 analyzer rules or release metadata were altered to suppress the finding.
+
+## Submission numbering correction (2026-11-06)
+
+The initial ZIP included `version-name: "0.2.6"`. GNOME Extensions assigned
+submission **7**, but displayed the supplied name in the public versions table.
+The review page confirms both values: `0.2.6 (7)` at
+https://extensions.gnome.org/review/77976. The submission is awaiting review.
+
+Both maintenance branches now omit `version-name`. Packaging rejects manual
+`version` or `version-name` fields, preserving the existing integer display
+convention. The verifier identifies a deployed candidate through the deployment
+manifest's file hashes rather than a display name. The published `v0.2.6` tag
+is retained to identify the ZIP already submitted; it is not silently moved.
+The corrected ZIP is for a future submission: uploading it now would create
+another submission, not rename the existing version 7.
