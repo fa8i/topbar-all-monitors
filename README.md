@@ -20,10 +20,26 @@ top bar to every secondary monitor.
 Secondary panels are created after GNOME Shell finishes its startup animation,
 so styling extensions can identify their monitors using stable coordinates.
 
-## Compatibility
+## GNOME versions and downloads
 
-- GNOME Shell 50 and 51
-- Wayland
+| GNOME Shell | Source branch | Supported session | Installation |
+| --- | --- | --- | --- |
+| 50 and 51 | [`main`](https://github.com/fa8i/topbar-all-monitors/tree/main) | Wayland | [GNOME Extensions](https://extensions.gnome.org/extension/10094/top-bar-all-monitors/) |
+
+`main` contains the current implementation, tested on GNOME Shell 50.1 and
+51.1. Check GNOME Extensions for the review status and availability of packages
+for your Shell version. A supported version in Git may still be awaiting review
+on the website.
+
+When a newer GNOME release requires incompatible code, the previous compatible
+implementation will be maintained in a named branch, such as `gnome-50-51`.
+Those branches and their release downloads will be listed in this table. Versions
+that share an implementation stay together; there is no separate branch for
+every GNOME release.
+
+The former `gnome-50-support` and `gnome-51-support` branches have been
+consolidated into `main`. See [branch and release policy](docs/releases.md) for
+maintenance rules and the relationship between Git tags and GNOME submissions.
 
 The extension does not import, detect, modify, or depend directly on any
 third-party extension.
@@ -36,10 +52,20 @@ third-party extension.
 - Extensions that explicitly add their indicators only to `Main.panel` may
   remain limited to the primary monitor.
 
+## Manual installation
+
+Use GNOME Extensions for normal installation and updates. For manual stable
+packages, use the installable ZIP attached to a [GitHub release](https://github.com/fa8i/topbar-all-monitors/releases)
+when one is available for your Shell version. GitHub's automatic source archives
+contain the repository and are not installable extension packages.
+
 ## Installation from git
 
+This installs the current development code. For an older GNOME release, choose
+the maintenance branch listed above before running the installation script.
+
 ```bash
-git clone git@github.com:fa8i/topbar-all-monitors.git
+git clone https://github.com/fa8i/topbar-all-monitors.git
 cd topbar-all-monitors
 ./scripts/install-dev.sh
 ```
